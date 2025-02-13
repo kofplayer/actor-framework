@@ -6,29 +6,37 @@
 
 #ifdef CAF_WINDOWS
 #  include <time.h>
+#include <Windows.h>
 
 namespace {
 
 int get_utc_offset(const tm& time_buf) noexcept {
 #  if !defined(WINAPI_FAMILY) || (WINAPI_FAMILY == WINAPI_FAMILY_DESKTOP_APP)
-  // Call _tzset once to initialize the timezone information.
-  static bool unused = [] {
-    _tzset();
+  // Initialize timezone information if not already done.
+  static bool tz_initialized = []() {
+    TIME_ZONE_INFORMATION tz_info;
+    GetTimeZoneInformation(&tz_info);
     return true;
   }();
-  static_cast<void>(unused);
-#  endif
-  // Get the timezone offset in seconds.
-  long offset = 0;
-  _get_timezone(&offset);
-  // Add the DST bias if DST is active.
-  if (time_buf.tm_isdst) {
-    long dstbias = 0;
-    _get_dstbias(&dstbias);
-    offset += dstbias;
+  static_cast<void>(tz_initialized);
+
+  // Get the timezone offset without DST.
+  TIME_ZONE_INFORMATION tz_info;
+  DWORD res = GetTimeZoneInformation(&tz_info);
+  long base_offset = -(tz_info.Bias * 60); // Convert from minutes to seconds.
+
+  // Adjust for DST if active.
+  if (time_buf.tm_isdst && (res == TIME_ZONE_ID_DAYLIGHT)) {
+    base_offset -= tz_info.DaylightBias * 60; // DST bias in minutes to seconds.
   }
-  return static_cast<int>(-offset);
+
+  return static_cast<int>(base_offset);
+#  else
+  // Handle other WINAPI_FAMILY scenarios or provide a fallback mechanism.
+  return 0; // Fallback value or error code, depending on your needs.
+#  endif
 }
+
 
 void to_local_time(time_t ts, tm& time_buf) noexcept {
   localtime_s(&time_buf, &ts);
